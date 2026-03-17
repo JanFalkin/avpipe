@@ -1,0 +1,15 @@
+{
+  "output_path": "out/final_with_inserted_ads.mp4",
+  "program_dir": "out/prog",
+  "program_chunk_sec": 1.6,
+  "ads": [
+    {
+      "dir": "out/ad_fake",
+      "insert_at_sec": 120.0
+    },
+    {
+      "dir": "out/ad_fake",
+      "insert_at_sec": 360.0
+    }
+  ]
+}

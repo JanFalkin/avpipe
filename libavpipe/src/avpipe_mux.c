@@ -381,7 +381,7 @@ get_next_packet(
 {
     io_mux_ctx_t *in_mux_ctx = xctx->in_mux_ctx;
     AVPacket *pkts = xctx->pkt_array;
-    int index = 0;
+    int index = -1;
     int ret = 0;
     int i;
 
@@ -392,6 +392,10 @@ get_next_packet(
         }
     }
 
+    /* All input streams are exhausted. */
+    if (index < 0)
+        return AVERROR_EOF;
+
     for (i=index+1; i<in_mux_ctx->audio_count + in_mux_ctx->caption_count + 1; i++) {
         if (!xctx->is_pkt_valid[i])
             continue;
@@ -401,10 +405,6 @@ get_next_packet(
             index = i;
         }
     }
-
-    /* If there is no valid packet anymore return */
-    if (!xctx->is_pkt_valid[index])
-        return 0;
 
     *pkt = pkts[index];
     pkt->stream_index = index;
@@ -421,12 +421,15 @@ read_frame_again:
             goto read_frame_again;
         xctx->is_pkt_valid[index] = 1;
     } else {
-        if (ret != AVERROR_EOF)
+        if (ret != AVERROR_EOF) {
             elv_err("Failed to read frame index=%d, ret=%d", index, ret);
-        return ret;
+            return ret;
+        }
+        /* Only this stream is exhausted; keep muxing remaining streams. */
+        xctx->is_pkt_valid[index] = 0;
     }
 
-    if (!is_pts_per_frame_known(pts_estimator, index)) {
+    if (xctx->is_pkt_valid[index] && !is_pts_per_frame_known(pts_estimator, index)) {
         ret = report_successive_packets_for_pts_estimation(pts_estimator, index, pkt, &pkts[index]);
         if (ret < 0) {
             elv_err("Failed to report successive packets for pts estimation, ret=%d", ret);
