@@ -3617,15 +3617,40 @@ get_filter_str(
             return eav_filter_string_init;
         }
     } else {
+        const char *uniqfeed_project_path = params->uniqfeed_project_path;
+        const char *uniqfeed_metadata_dir = params->uniqfeed_metadata_dir;
+        const char *uniqfeed_viewer_profile = params->uniqfeed_viewer_profile;
+
         if (!encoder_context->codec_context[encoder_context->video_stream_index]) {
             elv_err("Failed to make filter string, invalid codec context (check params), url=%s", params->url);
             return eav_filter_string_init;
         }
         *filter_str = (char *) calloc(FILTER_STRING_SZ, 1);
-        sprintf(*filter_str, "scale=%d:%d",
-            encoder_context->codec_context[encoder_context->video_stream_index]->width,
-            encoder_context->codec_context[encoder_context->video_stream_index]->height);
-            elv_dbg("FILTER scale=%s", *filter_str);
+        if (uniqfeed_project_path && *uniqfeed_project_path) {
+            if (uniqfeed_metadata_dir && *uniqfeed_metadata_dir) {
+                snprintf(*filter_str, FILTER_STRING_SZ,
+                    "scale=%d:%d,uniqfeed=project_path=%s:metadata_dir=%s:viewer_profile='%s':passthrough_on_failure=%d",
+                    encoder_context->codec_context[encoder_context->video_stream_index]->width,
+                    encoder_context->codec_context[encoder_context->video_stream_index]->height,
+                    uniqfeed_project_path,
+                    uniqfeed_metadata_dir,
+                    uniqfeed_viewer_profile ? uniqfeed_viewer_profile : "",
+                    params->uniqfeed_passthrough_on_failure);
+            } else {
+                snprintf(*filter_str, FILTER_STRING_SZ,
+                    "scale=%d:%d,uniqfeed=project_path=%s:viewer_profile='%s':passthrough_on_failure=%d",
+                    encoder_context->codec_context[encoder_context->video_stream_index]->width,
+                    encoder_context->codec_context[encoder_context->video_stream_index]->height,
+                    uniqfeed_project_path,
+                    uniqfeed_viewer_profile ? uniqfeed_viewer_profile : "",
+                    params->uniqfeed_passthrough_on_failure);
+            }
+        } else {
+            snprintf(*filter_str, FILTER_STRING_SZ, "scale=%d:%d",
+                encoder_context->codec_context[encoder_context->video_stream_index]->width,
+                encoder_context->codec_context[encoder_context->video_stream_index]->height);
+        }
+        elv_dbg("FILTER %s", *filter_str);
     }
 
     return 0;
@@ -3715,11 +3740,14 @@ avpipe_xc(
             goto xc_done;
         }
 
+        avpipe_uniqfeed_provider_set_current_xctx(xctx);
         if ((rc = init_video_filters(filter_str, decoder_context, encoder_context, xctx->params)) != eav_success) {
+            avpipe_uniqfeed_provider_clear_current_xctx();
             free(filter_str);
             elv_err("Failed to initialize video filter, url=%s", params->url);
             goto xc_done;
         }
+        avpipe_uniqfeed_provider_clear_current_xctx();
         free(filter_str);
     }
 
@@ -4923,7 +4951,11 @@ log_params(
         "deinterlace=%d "
         "use_preprocessed_input=%d "
         "copy_mpegts=%d "
-        "timecode=%s",
+        "timecode=%s "
+        "uniqfeed_project_path=%s "
+        "uniqfeed_metadata_dir=%s "
+        "uniqfeed_viewer_profile=%s "
+        "uniqfeed_passthrough_on_failure=%d",
         params->stream_id, params->url,
         avpipe_version(),
         params->bypass_transcoding, params->skip_decoding,
@@ -4950,7 +4982,11 @@ log_params(
         1, params->video_time_base, params->video_frame_duration_ts, params->rotate,
         params->profile ? params->profile : "", params->level,  params->deinterlace,
         params->use_preprocessed_input, params->copy_mpegts,
-        params->timecode);
+        params->timecode,
+        params->uniqfeed_project_path ? params->uniqfeed_project_path : "",
+        params->uniqfeed_metadata_dir ? params->uniqfeed_metadata_dir : "",
+        params->uniqfeed_viewer_profile ? params->uniqfeed_viewer_profile : "",
+        params->uniqfeed_passthrough_on_failure);
     elv_log("AVPIPE XCPARAMS %s", buf);
 }
 
@@ -4990,6 +5026,9 @@ avpipe_copy_xcparams(
     p2->watermark_text = safe_strdup(p->watermark_text);
     p2->watermark_timecode = safe_strdup(p->watermark_timecode);
     p2->timecode = safe_strdup(p->timecode);
+    p2->uniqfeed_project_path = safe_strdup(p->uniqfeed_project_path);
+    p2->uniqfeed_metadata_dir = safe_strdup(p->uniqfeed_metadata_dir);
+    p2->uniqfeed_viewer_profile = safe_strdup(p->uniqfeed_viewer_profile);
     p2->overlay_filename = safe_strdup(p->overlay_filename);
     if (p->watermark_overlay_len > 0) {
         p2->watermark_overlay = (char *) calloc(1, p->watermark_overlay_len);
@@ -5098,6 +5137,9 @@ avpipe_free_params(
     free(params->master_display);
     free(params->filter_descriptor);
     free(params->mux_spec);
+    free(params->uniqfeed_project_path);
+    free(params->uniqfeed_metadata_dir);
+    free(params->uniqfeed_viewer_profile);
     free(params->extract_images_ts);
     free(params);
     xctx->params = NULL;

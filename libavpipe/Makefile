@@ -1,5 +1,6 @@
 TOP_DIR ?= $(shell pwd)
 SRCS=avpipe_xc.c \
+	avpipe_uniqfeed_context.c \
     avpipe_utils.c \
     avpipe_format.c \
     avpipe_codec.c \

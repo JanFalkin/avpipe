@@ -25,8 +25,8 @@ package avpipe
 // #cgo pkg-config: libavutil
 // #cgo netint pkg-config: xcoder
 // #cgo pkg-config: srt
-// #cgo LDFLAGS: -Wl,--copy-dt-needed-entries -Wl,--no-as-needed
-// #cgo LDFLAGS: -l:libcommon_colorconv2_lib.so -l:libcommon_rpc_lib.so -l:libcommon_blob_store_lib.so -l:libcommon_cvtools_lib.so -l:libcommon_system_lib.so -l:libcommon.so -l:libcommon_arguments_lib.so -l:libcommon_allocator_lib.so -l:libcommon_definitions_lib.so -l:libcommon_image_lib.so -l:libcommon_logger3_lib.so -l:libcommon_media_store_lib.so -l:libcommon_contour_lib.so -l:libtracking_types.so -l:libcamoverlay_common.so -l:libball_tracking_common.so -l:libuidata.so -l:libstateservice_core.so -l:libmodel.so -l:libfdio.so -l:librender.so -l:libmedia.so -l:libmodel3d.so -l:libcamoverlay_renderer.so -l:libvisapp.so -l:libufvulkan.so -l:libdozer.so -l:libkeypoint.so.22.0.1 -l:libuf_common_rpc_proto.so -l:libstateservice.so -l:libuf_model_proto.so -l:libuf_api.so -l:libopencv_core.so.412 -l:libopencv_imgcodecs.so.412 -l:libopencv_imgproc.so.412 -l:libopencv_videoio.so.412 -l:libopencv_dnn.so.412 -l:libvulkan.so.1 -l:libnvinfer.so.10 -l:libnvinfer_plugin.so.10 -l:libnvonnxparser.so.10 -l:libredis++.so.1
+// #cgo LDFLAGS: -Wl,--copy-dt-needed-entries -Wl,--no-as-needed -Wl,--unresolved-symbols=ignore-in-shared-libs
+// #cgo LDFLAGS: -l:libuf-renderlib.so -l:libcommon_colorconv2_lib.so -l:libcommon_rpc_lib.so -l:libcommon_blob_store_lib.so -l:libcommon_cvtools_lib.so -l:libcommon_system_lib.so -l:libcommon.so -l:libcommon_arguments_lib.so -l:libcommon_allocator_lib.so -l:libcommon_definitions_lib.so -l:libcommon_image_lib.so -l:libcommon_logger3_lib.so -l:libcommon_media_store_lib.so -l:libcommon_contour_lib.so -l:libtracking_types.so -l:libcamoverlay_common.so -l:libball_tracking_common.so -l:libuidata.so -l:libstateservice_core.so -l:libmodel.so -l:libfdio.so -l:librender.so -l:libmedia.so -l:libmodel3d.so -l:libcamoverlay_renderer.so -l:libvisapp.so -l:libufvulkan.so -l:libdozer.so -l:libkeypoint.so.22.0.1 -l:libuf_common_rpc_proto.so -l:libstateservice.so -l:libuf_model_proto.so -l:libuf_api.so -l:libopencv_core.so.412 -l:libopencv_imgcodecs.so.412 -l:libopencv_imgproc.so.412 -l:libopencv_videoio.so.412 -l:libopencv_dnn.so.412 -l:libvulkan.so.1 -l:libnvinfer.so.10 -l:libnvinfer_plugin.so.10 -l:libnvonnxparser.so.10 -l:libredis++.so.1
 // #cgo CFLAGS: -I${SRCDIR}/libavpipe/include
 // #cgo CFLAGS: -I${SRCDIR}/utils/include
 // #cgo LDFLAGS: -L${SRCDIR}
@@ -797,7 +797,58 @@ func (h *ioHandler) OutStat(fd C.int64_t,
 func GenerateAndRegisterHandle() C.int32_t {
 	handle := generateI32Handle()
 	goavpipe.AssociateGIDWithHandle(handle)
+	goavpipe.AttachPendingUniqfeedMetadataProvider(handle)
 	return C.int32_t(handle)
+}
+
+//export AVPipeUniqfeedProviderInit
+func AVPipeUniqfeedProviderInit(handle C.int32_t, projectPath, metadataDir *C.char) C.int {
+	provider, ok := goavpipe.GetUniqfeedMetadataProvider(int32(handle))
+	if !ok {
+		return C.int(-int(syscall.ENOSYS))
+	}
+
+	if err := provider.Init(C.GoString(projectPath), C.GoString(metadataDir)); err != nil {
+		goavpipe.Log.Error("AVPipeUniqfeedProviderInit", "handle", int32(handle), "err", err)
+		return C.int(-1)
+	}
+
+	return C.int(0)
+}
+
+//export AVPipeUniqfeedProviderGet
+func AVPipeUniqfeedProviderGet(handle C.int32_t, frameIndex C.uint64_t, streamIndex C.uint, renderTID C.int64_t, metadataBlob **C.uint8_t, metadataBlobSize *C.size_t) C.int {
+	provider, ok := goavpipe.GetUniqfeedMetadataProvider(int32(handle))
+	if !ok {
+		*metadataBlob = nil
+		*metadataBlobSize = 0
+		return C.int(-int(syscall.ENOSYS))
+	}
+
+	blob, err := provider.GetMetadataBlob(uint64(frameIndex), uint32(streamIndex), int64(renderTID))
+	if err != nil {
+		goavpipe.Log.Error("AVPipeUniqfeedProviderGet", "handle", int32(handle), "render_tid", int64(renderTID), "err", err)
+		return C.int(-1)
+	}
+
+	if len(blob) == 0 {
+		*metadataBlob = nil
+		*metadataBlobSize = 0
+		return C.int(0)
+	}
+
+	*metadataBlob = (*C.uint8_t)(C.CBytes(blob))
+	*metadataBlobSize = C.size_t(len(blob))
+	return C.int(0)
+}
+
+//export AVPipeUniqfeedProviderClose
+func AVPipeUniqfeedProviderClose(handle C.int32_t) C.int {
+	if err := goavpipe.ReleaseUniqfeedMetadataProvider(int32(handle)); err != nil {
+		goavpipe.Log.Error("AVPipeUniqfeedProviderClose", "handle", int32(handle), "err", err)
+		return C.int(-1)
+	}
+	return C.int(0)
 }
 
 //export AssociateCThreadWithHandle
@@ -926,6 +977,9 @@ func getCParams(params *goavpipe.XcParams) (*C.xcparams_t, error) {
 		level:                     C.int(params.Level),
 		deinterlace:               C.dif_type(params.Deinterlace),
 		timecode:                  C.CString(params.Timecode),
+		uniqfeed_project_path:     C.CString(params.UniqfeedProjectPath),
+		uniqfeed_metadata_dir:     C.CString(params.UniqfeedMetadataDir),
+		uniqfeed_viewer_profile:   C.CString(params.UniqfeedViewerProfile),
 
 		// All boolean params are handled below
 	}
@@ -974,6 +1028,10 @@ func getCParams(params *goavpipe.XcParams) (*C.xcparams_t, error) {
 		cparams.debug_frame_level = C.int(1)
 	}
 
+	if params.UniqfeedPassthroughOnFailure {
+		cparams.uniqfeed_passthrough_on_failure = C.int(1)
+	}
+
 	for i := 0; i < len(params.AudioIndex); i++ {
 		cparams.audio_index[i] = C.int(params.AudioIndex[i])
 	}
@@ -1009,6 +1067,7 @@ func Xc(params *goavpipe.XcParams) error {
 	}
 	goavpipe.Log.Debug(op, "XcParams", params)
 	defer goavpipe.Globals.RemoveURLHandlers(params.Url)
+	defer goavpipe.ClearPendingUniqfeedMetadataProvider()
 
 	cleanupMvhevcRestore := func() {}
 	if isMvhevcLayout(params) {
@@ -1022,7 +1081,12 @@ func Xc(params *goavpipe.XcParams) error {
 		return EAV_PARAM
 	}
 
+	goavpipe.RegisterPendingUniqfeedMetadataProvider(params.UniqfeedMetadataProvider)
+
 	rc := C.xc((*C.xcparams_t)(unsafe.Pointer(cparams)))
+	if handle, ok := goavpipe.GIDHandle(); ok {
+		_ = goavpipe.ReleaseUniqfeedMetadataProvider(handle)
+	}
 
 	err = avpipeError(rc)
 	if err != nil {
@@ -1353,6 +1417,9 @@ func XcInit(params *goavpipe.XcParams) (handle int32, retErr error) {
 		if retErr != nil {
 			// Failures don't return a handle so XcFini cannot be called
 			goavpipe.Globals.RemoveURLHandlers(job.url)
+			if handle > 0 {
+				_ = goavpipe.ReleaseUniqfeedMetadataProvider(handle)
+			}
 		}
 	}()
 
@@ -1400,6 +1467,7 @@ func XcInit(params *goavpipe.XcParams) (handle int32, retErr error) {
 		return -1, err
 	}
 	handle = int32(cHandle)
+	goavpipe.RegisterUniqfeedMetadataProvider(handle, params.UniqfeedMetadataProvider)
 
 	// Track the input opener by handle so XcCancel can unblock its Go read loop (see cancelableInputOpener).
 	if c, ok := bypassOpener.(cancelableInputOpener); ok {
@@ -1474,6 +1542,9 @@ func XcFini(handle int32) error {
 	}
 
 	goavpipe.Globals.RemoveURLHandlers(job.url)
+	if err := goavpipe.ReleaseUniqfeedMetadataProvider(handle); err != nil {
+		goavpipe.Log.Warn("XcFini", "handle", handle, "err", err)
+	}
 	return nil
 }
 

@@ -24,6 +24,7 @@
 #include "avpipe.h"
 #include "url_parser.h"
 #include "elv_sock.h"
+#include "uf_render_metadata_provider.h"
 
 extern const char *
 av_get_pix_fmt_name(
@@ -69,6 +70,9 @@ int     AVPipeStatOutput(int64_t, int64_t, int, avpipe_buftype_t, avp_stat_t, vo
 int     AVPipeStatMuxOutput(int64_t, int, avp_stat_t, void *);
 int32_t GenerateAndRegisterHandle();
 int     AssociateCThreadWithHandle(int32_t);
+int     AVPipeUniqfeedProviderInit(int32_t, char *, char *);
+int     AVPipeUniqfeedProviderGet(int32_t, uint64_t, unsigned int, int64_t, uint8_t **, size_t *);
+int     AVPipeUniqfeedProviderClose(int32_t);
 int     CLog(char *);
 int     CDebug(char *);
 int     CInfo(char *);
@@ -83,6 +87,101 @@ typedef struct xc_entry_t {
     int32_t         handle;
     xctx_t          *xctx;
 } xc_entry_t;
+
+typedef struct avpipe_uniqfeed_provider_ctx_t {
+    int32_t handle;
+} avpipe_uniqfeed_provider_ctx_t;
+
+static int
+avpipe_uniqfeed_provider_init(
+    const char *project_path,
+    const char *metadata_dir,
+    void **provider_opaque)
+{
+    avpipe_uniqfeed_provider_ctx_t *ctx;
+    xctx_t *current_xctx = avpipe_uniqfeed_provider_current_xctx();
+    int rc;
+
+    if (!provider_opaque || !current_xctx || current_xctx->handle <= 0)
+        return -ENOSYS;
+
+    ctx = calloc(1, sizeof(*ctx));
+    if (!ctx)
+        return -ENOMEM;
+
+    ctx->handle = current_xctx->handle;
+    rc = AVPipeUniqfeedProviderInit(ctx->handle,
+                                    (char *)(project_path ? project_path : ""),
+                                    (char *)(metadata_dir ? metadata_dir : ""));
+    if (rc < 0) {
+        free(ctx);
+        return rc;
+    }
+
+    *provider_opaque = ctx;
+    return 0;
+}
+
+static int
+avpipe_uniqfeed_provider_get_metadata_blob(
+    uint64_t frame_index,
+    unsigned int stream_index,
+    int64_t render_tid,
+    const AVFrame *filtered_frame,
+    uint8_t **metadata_blob,
+    size_t *metadata_blob_size,
+    void *provider_opaque)
+{
+    avpipe_uniqfeed_provider_ctx_t *ctx = provider_opaque;
+
+    (void)filtered_frame;
+
+    if (!ctx)
+        return -ENOSYS;
+
+    return AVPipeUniqfeedProviderGet(ctx->handle,
+                                     frame_index,
+                                     stream_index,
+                                     render_tid,
+                                     metadata_blob,
+                                     metadata_blob_size);
+}
+
+static void
+avpipe_uniqfeed_provider_release_metadata_blob(
+    uint8_t *metadata_blob,
+    size_t metadata_blob_size,
+    void *provider_opaque)
+{
+    (void)metadata_blob_size;
+    (void)provider_opaque;
+    free(metadata_blob);
+}
+
+static void
+avpipe_uniqfeed_provider_close(
+    void *provider_opaque)
+{
+    avpipe_uniqfeed_provider_ctx_t *ctx = provider_opaque;
+
+    if (!ctx)
+        return;
+
+    AVPipeUniqfeedProviderClose(ctx->handle);
+    free(ctx);
+}
+
+const UfMetadataProviderVTable *uFGetExternalMetadataProviderV1(void)
+{
+    static const UfMetadataProviderVTable provider = {
+        .init = avpipe_uniqfeed_provider_init,
+        .get_metadata_blob = avpipe_uniqfeed_provider_get_metadata_blob,
+        .release_metadata_blob = avpipe_uniqfeed_provider_release_metadata_blob,
+        .close = avpipe_uniqfeed_provider_close,
+    };
+
+    return &provider;
+}
 
 xc_entry_t          *xc_table[MAX_TX];
 static pthread_mutex_t tx_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -986,6 +1085,7 @@ xc_init(
 
     xctx->in_handlers = in_handlers; // PENDING(SS) already done in avpipe_init
     xctx->out_handlers = out_handlers;
+    xctx->handle = h;
     xctx->associate_thread = AssociateCThreadWithHandle;
 
     *handle = h;

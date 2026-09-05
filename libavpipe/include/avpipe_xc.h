@@ -568,6 +568,10 @@ typedef struct xcparams_t {
     int         level;
     dif_type    deinterlace;                // Deinterlacing filter
     char        *timecode;                  // Original timecode string
+    char        *uniqfeed_project_path;     // Optional uniqfeed project path for the video filter
+    char        *uniqfeed_metadata_dir;     // Optional uniqfeed metadata directory fallback
+    char        *uniqfeed_viewer_profile;   // Viewer profile string for VAST targeting (e.g. "session=1")
+    int         uniqfeed_passthrough_on_failure;
 } xcparams_t;
 
 #define MAX_CODEC_NAME  256
@@ -702,6 +706,16 @@ typedef struct xctx_t {
     volatile int        err;        // Return code of transcoding
 
 } xctx_t;
+
+void
+avpipe_uniqfeed_provider_set_current_xctx(
+    xctx_t *xctx);
+
+void
+avpipe_uniqfeed_provider_clear_current_xctx(void);
+
+xctx_t *
+avpipe_uniqfeed_provider_current_xctx(void);
 
 /* Params that are needed to decode/encode a frame in a thread */
 typedef struct xc_frame_t {
